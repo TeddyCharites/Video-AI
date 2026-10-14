@@ -23,3 +23,6 @@ third_party/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Model tải về (Kokoro TTS…) — tải bằng tools/download_models.py
+models/

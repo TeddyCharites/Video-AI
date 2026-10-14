@@ -16,7 +16,7 @@ video:
 scenes:
   min_sec: 8                    # hướng 1 (whiteboard-stream-animation): 8–20 s/cảnh
   max_sec: 20
-  syllables_per_sec: 4.5        # tốc độ đọc đo từ VieNeu (~28 tiếng / 6 s) → đổi giây ra số tiếng cho LLM
+
 
 llm:
   host: http://127.0.0.1:11434  # Ollama
@@ -42,10 +42,41 @@ images:
     black line art on a plain white background, clean bold outlines,
     whiteboard sketch style, minimal shading
 
-tts:
-  precision: int8               # int8 (nhanh hơn ~30%) | fp32 (chất lượng tối đa)
-  voice: "Thiện Minh"           # xem: python tests/test_tts.py --list-voices
-  temperature: 0.8
+# ── Ngôn ngữ ────────────────────────────────────────────────────────────────
+# Thêm ngôn ngữ mới = thêm một mục ở đây + một engine TTS (tts_engines) đọc được ngôn ngữ đó.
+languages:
+  vi:
+    name: Tiếng Việt
+    llm_name: Vietnamese        # tên ngôn ngữ trong prompt gửi LLM
+    tts: vieneu
+    voice: "Thiện Minh"         # xem: python tests/test_tts.py --list-voices
+    units_per_sec: 4.5          # tốc độ đọc (tiếng/giây, đo từ VieNeu) → ước lượng giây khi đang gõ
+    subtitle_max_words: 12      # tối đa ~12 tiếng mỗi dòng phụ đề (9:16 tự giảm 1/3)
+  en:
+    name: English
+    llm_name: English
+    tts: kokoro
+    voice: am_michael           # giọng Kokoro: am_* nam Mỹ, af_* nữ Mỹ, bm_*/bf_* Anh
+    tts_lang: en-us             # mã ngôn ngữ cho Kokoro (en-us / en-gb)
+    units_per_sec: 2.7          # từ/giây
+    subtitle_max_words: 9
+
+default_source_lang: vi         # ngôn ngữ gốc của dự án mới
+default_target_langs: [en]      # ngôn ngữ dịch sẵn cho dự án mới (để trống [] = chỉ ngôn ngữ gốc)
+
+tts_engines:                    # engine TTS theo tên — mỗi ngôn ngữ chọn một engine ở trên
+  vieneu:                       # VieNeu-TTS v3 Turbo, ONNX trên CPU (tiếng Việt)
+    precision: int8             # int8 (nhanh hơn ~30%) | fp32 (chất lượng tối đa)
+    temperature: 0.8
+  kokoro:                       # Kokoro-82M ONNX int8 (Apache-2.0), tiếng Anh; tải bằng tools/download_models.py
+    model_path: models/kokoro/kokoro-v1.0.int8.onnx
+    voices_path: models/kokoro/voices-v1.0.bin
+    speed: 1.0
+
+translate:
+  temperature: 0.2
+  chunk_scenes: 12              # dịch tối đa bấy nhiêu cảnh mỗi lần gọi LLM
+  length_ratio: [0.4, 2.2]      # bản dịch có số từ/số tiếng gốc ngoài khoảng này → coi là dịch hỏng, thử lại
 
 whiteboard:
   # stream  = hướng 1 (whiteboard-stream-animation): vẽ cả ảnh một lượt, giữ hình 3s cuối
@@ -72,6 +103,19 @@ remotion:
   transition_sec: 0.4           # chuyển cảnh mờ dần; phải < whiteboard.tail_ms để giọng 2 cảnh không đè nhau
   background: "#F6F1E3"         # trùng màu giấy của repo vẽ bảng
   concurrency: 6                # số khung hình Remotion vẽ song song (máy 12 luồng CPU)
+
+shorts:                         # "Tạo Shorts từ video dài" (bước 4 của dự án dài)
+  min_sec: 30                   # độ dài một Short (chưa tính câu kết)
+  max_sec: 60
+  count: 4                      # số đề xuất muốn LLM đưa ra (3–5)
+  max_scenes: 4                 # tối đa bấy nhiêu cảnh liền nhau mỗi Short
+  title_font_ratio: 0.072       # cỡ chữ tiêu đề = 7.2% bề ngang khung dọc (52px ở 720)
+  subtitle_font_ratio: 0.07     # phụ đề LỚN (50px ở 720)
+  subtitle_max_words: {vi: 6, en: 5}   # ít chữ mỗi lần hiện → đọc kịp trên điện thoại
+  outro_min_sec: 3.0            # màn hình kết tối thiểu (dài hơn nếu câu kết đọc lâu hơn)
+  cta:                          # câu kết theo ngôn ngữ; {title} = tiêu đề video đầy đủ
+    vi: "Muốn biết đầy đủ? Xem video «{title}» trên kênh nhé!"
+    en: "Want the full story? Watch «{title}» on the channel!"
 
 music:                          # nhạc nền (mỗi dự án tải file riêng ở bước 4)
   volume: 0.15                  # âm lượng mặc định (0–1) so với giọng đọc

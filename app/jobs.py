@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 
 ACTIVE = ("queued", "running")
 FINISHED = ("done", "error", "cancelled")
-LANES = {"split": "gpu", "images": "gpu", "image": "gpu",
+LANES = {"split": "gpu", "translate": "gpu", "translate_one": "gpu", "suggest_shorts": "gpu",
+         "images": "gpu", "image": "gpu",
          "audio": "cpu", "audio_one": "cpu", "export": "cpu"}
 
 # "spawn": tiến trình con là Python mới tinh (mặc định trên Windows; ép luôn để Linux cũng giống)
@@ -36,7 +37,7 @@ _mp = mp.get_context("spawn")
 class Job:
     id: str
     project_id: str
-    kind: str                      # split | images | image | audio | audio_one | export
+    kind: str                      # split | translate | translate_one | images | image | audio | audio_one | export
     scene_id: str | None           # None = mọi cảnh cần làm
     label: str                     # mô tả tiếng Việt cho giao diện
     spec: dict = field(repr=False) # dữ liệu cho pipeline.runner.run_job
@@ -49,6 +50,7 @@ class Job:
     started_at: float | None = None
     finished_at: float | None = None
     cancel_requested: bool = False
+    lang: str | None = None        # ngôn ngữ (audio của vi và của en là 2 job khác nhau)
 
     @property
     def lane(self) -> str:
@@ -57,7 +59,7 @@ class Job:
     def to_dict(self) -> dict:
         return {
             "id": self.id, "project_id": self.project_id, "kind": self.kind, "lane": self.lane,
-            "scene_id": self.scene_id, "label": self.label, "status": self.status,
+            "scene_id": self.scene_id, "lang": self.lang, "label": self.label, "status": self.status,
             "done": self.done, "total": self.total, "message": self.message, "error": self.error,
             "created_at": self.created_at, "started_at": self.started_at,
             "finished_at": self.finished_at, "cancel_requested": self.cancel_requested,
@@ -121,18 +123,18 @@ class JobQueue:
 
     # ── API cho main.py ──
     def submit(self, project_id: str, kind: str, label: str, spec: dict,
-               scene_id: str | None = None) -> tuple[Job, bool]:
+               scene_id: str | None = None, lang: str | None = None) -> tuple[Job, bool]:
         """Thêm job. Nếu job giống hệt đang CHỜ thì trả lại job đó (không tạo trùng).
         Trả về (job, có phải job mới không)."""
         with self._cond:
             lane_queue = self._queues[LANES[kind]]
             for job in lane_queue:
-                if (job.project_id, job.kind, job.scene_id) == (project_id, kind, scene_id):
+                if (job.project_id, job.kind, job.scene_id, job.lang) == (project_id, kind, scene_id, lang):
                     return job, False
             # Chỉ gộp với job đang CHỜ. Job đang CHẠY có thể đã đi qua cảnh vừa được sửa,
             # nên vẫn xếp thêm job mới (nó chỉ làm phần còn chưa 'ready').
             job = Job(id=str(next(self._ids)), project_id=project_id, kind=kind,
-                      scene_id=scene_id, label=label, spec=spec)
+                      scene_id=scene_id, label=label, spec=spec, lang=lang)
             self._jobs[job.id] = job
             lane_queue.append(job)
             self._trim_history()

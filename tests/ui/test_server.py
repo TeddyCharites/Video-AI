@@ -1,7 +1,7 @@
 """Server riêng cho test giao diện (tests/ui/ui_test.mjs khởi động file này).
 
 - Dữ liệu trong outputs/tests/ui_* (xoá khi tắt), KHÔNG đụng dự án thật
-- Ảnh giả (placeholder) thay FLUX; TTS và animation chạy thật
+- Ảnh giả (placeholder) thay FLUX, bản dịch giả thay Ollama; TTS và animation chạy thật
 - Tạo sẵn một dự án mẫu đã xuất video, rồi mới mở server
 """
 
@@ -32,17 +32,24 @@ def main() -> None:
     cfg["outputs_dir"] = tmp
     try:
         script = (PROJECT_ROOT / "tests" / "sample_script.txt").read_text(encoding="utf-8")
+        overrides = {"images.backend": "placeholder", "translate.backend": "fake", "shorts.backend": "fake"}
+        # Kịch bản mẫu chỉ vài giây → hạ ngưỡng độ dài Short để có gợi ý mà test
+        cfg["shorts"].update(min_sec=4, max_sec=30, max_scenes=2)
+        languages = ["vi", "en"]
         settings = {"aspect_ratio": "16:9", "resolution": list(video_size(cfg)), "fps": cfg["video"]["fps"],
-                    "voice": cfg["tts"]["voice"], "subtitles": True, "image_backend": "placeholder"}
-        project = create_project(tmp, "UI test", script, settings)
-        ctx = runner.RunContext(progress=lambda d, t, m: None, overrides={"images.backend": "placeholder"})
-        print("Đang tạo dự án mẫu (TTS + animation thật, ~1 phút)…", flush=True)
+                    "voices": {l: cfg["languages"][l]["voice"] for l in languages},
+                    "subtitles": True, "subtitles_bilingual": False, "image_backend": "placeholder"}
+        project = create_project(tmp, "UI test", script, settings, "vi", languages)
+        ctx = runner.RunContext(progress=lambda d, t, m: None, overrides=overrides)
+        print("Đang tạo dự án mẫu vi + en (TTS + animation thật, ~2 phút)…", flush=True)
         runner.split_scenes(project, cfg, ctx, "paragraphs")
+        runner.translate_scenes(project, cfg, ctx)
         runner.generate_images(project, cfg, ctx)
-        runner.generate_audio(project, cfg, ctx)
-        runner.export_video(project, cfg, ctx)
+        for lang in languages:
+            runner.generate_audio(project, cfg, ctx, lang)
+        runner.export_video(project, cfg, ctx, languages)
         print(f"READY {project.id}", flush=True)  # ui_test.mjs đợi dòng này
-        uvicorn.run(create_app(cfg, overrides={"images.backend": "placeholder"}),
+        uvicorn.run(create_app(cfg, overrides=overrides),
                     host="127.0.0.1", port=port, log_level="warning")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

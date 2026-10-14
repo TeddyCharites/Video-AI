@@ -32,13 +32,13 @@ SCENES_SCHEMA = {
     "required": ["scenes"],
 }
 
-SYSTEM_PROMPT = """You split a Vietnamese narration script into scenes for a whiteboard-animation video.
+SYSTEM_PROMPT = """You split a {lang} narration script into scenes for a whiteboard-animation video.
 
 Rules:
 - Return ONLY JSON: {{"scenes": [{{"narration": "...", "image_prompt": "..."}}]}}
-- "narration": copy the ORIGINAL Vietnamese text of the scene VERBATIM. Do not translate, summarize,
+- "narration": copy the ORIGINAL {lang} text of the scene VERBATIM. Do not translate, summarize,
   rewrite, add or drop any words. Concatenating all narrations in order must give back the whole script.
-- Split only at sentence boundaries. Each scene should be about {min_words}-{max_words} Vietnamese
+- Split only at sentence boundaries. Each scene should be about {min_words}-{max_words} {lang}
   words ({min_sec}-{max_sec} seconds of speech). A single very long sentence may exceed this.
 - "image_prompt": ONE short English description (max 40 words) of a single simple illustration that
   shows the scene's main idea with concrete objects, people, icons and arrows. Describe only what is
@@ -171,12 +171,14 @@ def _split_chunk(chunk: str, system: str, llm: dict, log=print) -> list[dict]:
     raise SceneSplitError(f"LLM trả JSON sai sau {1 + llm['max_retries']} lần thử: {last_error}")
 
 
-def split_with_llm(script: str, cfg: dict, on_progress=None) -> list[dict]:
-    """on_progress(done, total, message): báo tiến độ theo từng phần của kịch bản."""
+def split_with_llm(script: str, cfg: dict, on_progress=None, lang: str = "vi") -> list[dict]:
+    """lang: ngôn ngữ của kịch bản (ngôn ngữ gốc của dự án).
+    on_progress(done, total, message): báo tiến độ theo từng phần của kịch bản."""
     llm, sc = cfg["llm"], cfg["scenes"]
-    words_per_sec = sc["syllables_per_sec"]  # tiếng Việt: mỗi "từ" tách bằng dấu cách là một tiếng
+    lang_cfg = cfg["languages"][lang]
+    words_per_sec = lang_cfg["units_per_sec"]  # tiếng Việt: tiếng/giây; tiếng Anh: từ/giây
     system = SYSTEM_PROMPT.format(
-        min_sec=sc["min_sec"], max_sec=sc["max_sec"],
+        lang=lang_cfg["llm_name"], min_sec=sc["min_sec"], max_sec=sc["max_sec"],
         min_words=round(sc["min_sec"] * words_per_sec), max_words=round(sc["max_sec"] * words_per_sec),
     )
     chunks = chunk_script(script, llm["chunk_words"])

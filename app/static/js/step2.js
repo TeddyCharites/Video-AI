@@ -92,8 +92,9 @@ export class Step2 {
     const jobStatus = sceneJobStatus(this.project, scene, 'image');
     c.title.textContent = `Cảnh ${index + 1}`;
     c.status.replaceChildren(badge(jobStatus || scene.image_status));
-    c.narration.textContent = scene.narration;
-    c.narration.title = scene.narration;
+    const narration = scene.langs[this.project.source_lang].narration;  // xem trước lời đọc ngôn ngữ gốc
+    c.narration.textContent = narration;
+    c.narration.title = narration;
 
     // Ảnh: chỉ đổi src khi URL đổi (URL có ?v=<thời điểm sửa>) → không nháy ảnh mỗi lần polling
     if (scene.image_url !== c.imageUrl) {
@@ -113,9 +114,9 @@ export class Step2 {
     // Không ghi đè chữ người dùng đang gõ
     if (document.activeElement !== c.prompt && !c.saver.isPending()) c.prompt.value = scene.image_prompt;
 
-    const imgError = scene.image_status === 'error' && scene.error;
+    const imgError = scene.image_status === 'error' && scene.image_error;
     c.error.hidden = !imgError;
-    c.error.textContent = imgError ? scene.error : '';
+    c.error.textContent = imgError ? scene.image_error : '';
 
     c.regenBtn.disabled = Boolean(jobStatus);
     c.regenBtn.textContent = scene.image_url ? '↻ Tạo lại' : 'Tạo ảnh';

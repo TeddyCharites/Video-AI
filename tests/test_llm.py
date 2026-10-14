@@ -46,7 +46,7 @@ def main() -> int:
     min_sec, max_sec = cfg["scenes"]["min_sec"], cfg["scenes"]["max_sec"]
     for i, s in enumerate(scenes, 1):
         words = len(s["narration"].split())
-        est = words / cfg["scenes"]["syllables_per_sec"]
+        est = words / cfg["languages"]["vi"]["units_per_sec"]
         flag = "" if min_sec <= est <= max_sec else "  ← ngoài khoảng mong muốn"
         print(f"\n{i:02d}. {words} tiếng (~{est:.0f}s){flag}\n    {s['narration']}\n    ảnh: {s['image_prompt']}")
 

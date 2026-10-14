@@ -16,6 +16,10 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
     cfg["whiteboard"]["repo_dir"] = PROJECT_ROOT / cfg["whiteboard"]["repo_dir"]
     if cfg["whiteboard"].get("regions_repo_dir"):
         cfg["whiteboard"]["regions_repo_dir"] = PROJECT_ROOT / cfg["whiteboard"]["regions_repo_dir"]
+    for engine in cfg.get("tts_engines", {}).values():  # đường dẫn model của các engine TTS
+        for key in ("model_path", "voices_path"):
+            if engine.get(key):
+                engine[key] = PROJECT_ROOT / engine[key]
     if cfg["whiteboard"].get("pen_image"):
         cfg["whiteboard"]["pen_image"] = PROJECT_ROOT / cfg["whiteboard"]["pen_image"]
     return cfg
@@ -35,14 +39,17 @@ def apply_runtime_env(cfg: dict) -> None:
 
 def _hf_models_cached(cfg: dict) -> bool:
     """Cả model ảnh (FLUX) lẫn giọng đọc (VieNeu) đã nằm trong cache Hugging Face chưa?
-    Chưa → để online cho lần chạy đầu tự tải về."""
-    try:
-        from huggingface_hub import try_to_load_from_cache
-    except ImportError:
-        return False
+    Chưa → để online cho lần chạy đầu tự tải về.
+
+    Xem thẳng thư mục cache trên đĩa, KHÔNG import huggingface_hub: thư viện đọc HF_HUB_OFFLINE đúng
+    một lần lúc import, nên import nó trước khi đặt biến môi trường thì chế độ offline không có tác dụng."""
+    import os
+    hub = Path(os.environ.get("HF_HUB_CACHE")
+               or Path(os.environ.get("HF_HOME") or Path.home() / ".cache" / "huggingface") / "hub")
     checks = [(cfg["images"]["model"], "model_index.json"),
               ("pnnbao-ump/VieNeu-TTS-v3-Turbo", "config.json")]
-    return all(isinstance(try_to_load_from_cache(repo, name), str) for repo, name in checks)
+    return all(any((hub / f"models--{repo.replace('/', '--')}" / "snapshots").glob(f"*/{name}"))
+               for repo, name in checks)
 
 
 def video_size(cfg: dict) -> tuple[int, int]:

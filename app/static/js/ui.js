@@ -75,19 +75,21 @@ export function focusScene(root, sceneId) {
 export const isActive = job => job.status === 'queued' || job.status === 'running';
 
 const JOB_KINDS = {
-  image: { one: 'image', all: 'images' },
-  audio: { one: 'audio_one', all: 'audio' },
+  image: { one: 'image', all: 'images', status: s => s.image_status },
+  audio: { one: 'audio_one', all: 'audio', status: (s, lang) => s.langs[lang]?.audio_status },
+  text: { one: 'translate_one', all: 'translate', status: (s, lang) => s.langs[lang]?.text_status },
 };
 
-/** Cảnh này có đang chờ/tạo ảnh (field='image') hay audio (field='audio') không?
- *  Trả về 'running' | 'queued' | null. */
-export function sceneJobStatus(project, scene, field) {
+/** Cảnh này có đang chờ/làm ảnh (field='image'), audio của ngôn ngữ `lang` (field='audio')
+ *  hay bản dịch (field='text') không? Trả về 'running' | 'queued' | null. */
+export function sceneJobStatus(project, scene, field, lang = null) {
   const kinds = JOB_KINDS[field];
   let result = null;
   for (const j of project.jobs.filter(isActive)) {
+    if (field === 'audio' && j.lang !== lang) continue;   // audio en không phải audio vi
     const mine = (j.kind === kinds.one && j.scene_id === scene.id)
       // Job "mọi cảnh" chỉ làm cảnh chưa ready
-      || (j.kind === kinds.all && scene[`${field}_status`] !== 'ready');
+      || (j.kind === kinds.all && kinds.status(scene, lang) !== 'ready');
     if (!mine) continue;
     if (j.status === 'running' && j.kind === kinds.one) return 'running';
     result = j.status === 'running' ? 'running' : (result || 'queued');
@@ -95,8 +97,20 @@ export function sceneJobStatus(project, scene, field) {
   return result;
 }
 
-export function activeJob(project, kind) {
-  return project.jobs.find(j => j.kind === kind && isActive(j)) || null;
+/** Job đang chờ/chạy theo loại (và ngôn ngữ, nếu đưa vào). */
+export function activeJob(project, kind, lang = undefined) {
+  return project.jobs.find(j => j.kind === kind && isActive(j) && (lang === undefined || j.lang === lang)) || null;
+}
+
+/** Tên hiển thị của ngôn ngữ ("Tiếng Việt", "English"). */
+export function langName(settings, code) {
+  return settings.languages.find(l => l.code === code)?.name || code;
+}
+
+/** Ước lượng số giây đọc của một đoạn ở ngôn ngữ `code`. */
+export function estimateSec(settings, code, text) {
+  const ups = settings.languages.find(l => l.code === code)?.units_per_sec || 3;
+  return countWords(text) / ups;
 }
 
 /**

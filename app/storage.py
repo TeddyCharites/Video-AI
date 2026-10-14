@@ -1,10 +1,19 @@
-"""Lưu trữ theo dự án: outputs/<project_id>/{project.json, scenes.json, scenes/<id>/, final.mp4}.
+"""Lưu trữ theo dự án (định dạng v2, đa ngôn ngữ):
+
+outputs/<project_id>/
+├── project.json          # tên, kịch bản gốc, ngôn ngữ, giọng theo ngôn ngữ, trạng thái video theo ngôn ngữ
+├── scenes.json           # cảnh: ảnh dùng chung + langs.<mã> (lời đọc, audio, clip riêng từng ngôn ngữ)
+├── scenes/<id>/image.png
+├── scenes/<id>/<lang>/{audio.wav, clip.mp4, annotation.json}
+├── music/background.*    # nhạc nền (tuỳ chọn)
+└── final.<lang>.mp4 · final.<lang>.srt · final.<lang>-<lang2>.srt (song ngữ)
 
 Dữ liệu trên đĩa là "nguồn sự thật": tắt app mở lại vẫn làm tiếp được.
 Mọi thao tác đọc–sửa–ghi scenes.json/project.json đi qua khoá của dự án (project.lock),
 vì worker (đang tạo ảnh/audio) và API (người dùng đang sửa cảnh) có thể ghi cùng lúc.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -16,8 +25,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+SCHEMA_VERSION = 2
 STATUSES = ("missing", "ready", "stale", "error")
-STATUS_FILES = {"image_status": "image.png", "audio_status": "audio.wav", "clip_status": "clip.mp4"}
+LANG_FILES = {"audio_status": "audio.wav", "clip_status": "clip.mp4"}  # file trong scenes/<id>/<lang>/
 
 
 # ── Ghi file an toàn ──────────────────────────────────────────────────────────
@@ -102,12 +112,18 @@ class Project:
     def scenes_file(self) -> Path:
         return self.dir / "scenes.json"
 
-    @property
-    def final_video(self) -> Path:
-        return self.dir / "final.mp4"
+    def final_video(self, lang: str) -> Path:
+        return self.dir / f"final.{lang}.mp4"
+
+    def srt_path(self, lang: str, secondary: str | None = None) -> Path:
+        """final.vi.srt, hoặc final.vi-en.srt cho phụ đề song ngữ (dòng chính vi, dòng phụ en)."""
+        return self.dir / (f"final.{lang}-{secondary}.srt" if secondary else f"final.{lang}.srt")
 
     def scene_dir(self, scene_id: str) -> Path:
         return self.dir / "scenes" / scene_id
+
+    def lang_dir(self, scene_id: str, lang: str) -> Path:
+        return self.dir / "scenes" / scene_id / lang
 
     def exists(self) -> bool:
         return self.project_file.is_file()
@@ -115,7 +131,9 @@ class Project:
     # project.json
     def load_info(self) -> dict:
         info = read_json(self.project_file)
-        info.setdefault("final_status", "ready" if self.final_video.is_file() else "missing")
+        info.setdefault("finals", {})
+        for lang in info.get("languages", []):
+            info["finals"].setdefault(lang, {"status": "ready" if self.final_video(lang).is_file() else "missing"})
         return info
 
     def save_info(self, info: dict) -> None:
@@ -128,17 +146,27 @@ class Project:
             self.save_info(info)
             return info
 
-    def set_final_status(self, status: str, **extra) -> None:
+    def languages(self) -> list[str]:
+        return self.load_info()["languages"]
+
+    def source_lang(self) -> str:
+        return self.load_info()["source_lang"]
+
+    def set_final(self, lang: str, status: str, **extra) -> None:
         def apply(info):
-            info["final_status"] = status
-            info.update(extra)
+            info["finals"].setdefault(lang, {})
+            info["finals"][lang]["status"] = status
+            info["finals"][lang].update(extra)
         self.update_info(apply)
 
-    def mark_final_stale(self) -> None:
-        """Có gì đó trong các cảnh đã đổi → final.mp4 hiện có (nếu có) không còn đúng."""
-        with self.lock:
-            if self.load_info()["final_status"] == "ready":
-                self.set_final_status("stale")
+    def mark_final_stale(self, langs: list[str] | None = None) -> None:
+        """Có gì đó đã đổi → video đã xuất của các ngôn ngữ này (mặc định: mọi ngôn ngữ) không còn đúng."""
+        def apply(info):
+            for lang in langs or info["languages"]:
+                f = info["finals"].get(lang)
+                if f and f.get("status") == "ready":
+                    f["status"] = "stale"
+        self.update_info(apply)
 
     # scenes.json — luôn trả về danh sách đã sắp theo "order"
     def load_scenes(self) -> list[dict]:
@@ -176,28 +204,42 @@ class Project:
         """Nếu scenes.json nói 'ready' mà file đã bị xoá → coi như 'missing'."""
         def apply(scenes):
             for s in scenes:
-                for field, filename in STATUS_FILES.items():
-                    if s[field] == "ready" and not (self.scene_dir(s["id"]) / filename).is_file():
-                        s[field] = "missing"
+                if s["image_status"] == "ready" and not (self.scene_dir(s["id"]) / "image.png").is_file():
+                    s["image_status"] = "missing"
+                for lang, entry in s["langs"].items():
+                    for field, filename in LANG_FILES.items():
+                        if entry[field] == "ready" and not (self.lang_dir(s["id"], lang) / filename).is_file():
+                            entry[field] = "missing"
         with self.lock:
             if self.scenes_file.is_file():
                 self.update_scenes(apply)
-            if not self.final_video.is_file() and self.load_info()["final_status"] != "missing":
-                self.set_final_status("missing")
+
+            def finals(info):
+                for lang, f in info["finals"].items():
+                    if f.get("status") != "missing" and not self.final_video(lang).is_file():
+                        f["status"] = "missing"
+            self.update_info(finals)
 
 
-def create_project(outputs_dir: Path, name: str, script_text: str, settings: dict) -> Project:
+def create_project(outputs_dir: Path, name: str, script_text: str, settings: dict,
+                   source_lang: str, languages: list[str]) -> Project:
+    """languages: mọi ngôn ngữ của dự án, gồm cả ngôn ngữ gốc (được đưa lên đầu)."""
     project_id = f"{datetime.now():%Y%m%d-%H%M%S}-{slugify(name)}"
     project = Project(outputs_dir, project_id)
     if project.exists():
         raise FileExistsError(f"Dự án {project_id} đã tồn tại, thử lại sau 1 giây")
+    languages = [source_lang] + [l for l in languages if l != source_lang]
     project.save_info({
+        "schema_version": SCHEMA_VERSION,
         "id": project_id,
         "name": name,
         "script": script_text.replace("\r\n", "\n").strip(),
-        "settings": settings,   # bản chụp các cấu hình quan trọng lúc tạo dự án
+        "source_lang": source_lang,
+        "languages": languages,
+        "titles": {source_lang: name},   # tiêu đề video theo ngôn ngữ (bản dịch thêm khi dịch)
+        "settings": settings,             # bản chụp cấu hình lúc tạo dự án (giọng theo ngôn ngữ…)
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "final_status": "missing",
+        "finals": {lang: {"status": "missing"} for lang in languages},
     })
     project.save_scenes([])
     return project
@@ -220,48 +262,120 @@ def delete_project(project: Project) -> None:
 
 
 # ── Cảnh ──────────────────────────────────────────────────────────────────────
-def new_scene(scene_id: str, order: int, narration: str, image_prompt: str) -> dict:
+def text_hash(text: str) -> str:
+    """Dấu vân tay của một lời đọc: bản dịch ghi lại nó để biết mình được dịch từ phiên bản nào."""
+    return hashlib.sha1(" ".join(text.split()).encode("utf-8")).hexdigest()[:12]
+
+
+def new_lang_entry(narration: str = "", *, is_source: bool) -> dict:
     return {
-        "id": scene_id,
-        "order": order,
         "narration": narration.strip(),
-        "image_prompt": image_prompt.strip(),
+        # Ngôn ngữ gốc: lời đọc do người viết → luôn "ready". Bản dịch: "missing" tới khi được dịch.
+        "text_status": "ready" if is_source else "missing",
+        "source_hash": None,   # bản dịch: text_hash của lời gốc lúc dịch
+        "edited": False,       # bản dịch đã được người dùng sửa tay
         "duration_sec": None,
-        "image_status": "missing",
         "audio_status": "missing",
         "clip_status": "missing",
         "error": None,
     }
 
 
-def make_scenes(items: list[dict]) -> list[dict]:
+def new_scene(scene_id: str, order: int, narration: str, image_prompt: str,
+              source_lang: str, languages: list[str]) -> dict:
+    scene = {
+        "id": scene_id,
+        "order": order,
+        "image_prompt": image_prompt.strip(),
+        "image_status": "missing",
+        "image_error": None,
+        "langs": {},
+    }
+    ensure_languages(scene, source_lang, languages)
+    scene["langs"][source_lang]["narration"] = narration.strip()
+    return scene
+
+
+def make_scenes(items: list[dict], source_lang: str, languages: list[str]) -> list[dict]:
     """Từ [{narration, image_prompt}, ...] (kết quả chia cảnh) → danh sách cảnh đầy đủ schema."""
-    return [new_scene(f"{i:02d}", i, it["narration"], it.get("image_prompt", ""))
+    return [new_scene(f"{i:02d}", i, it["narration"], it.get("image_prompt", ""), source_lang, languages)
             for i, it in enumerate(items, start=1)]
 
 
-def needs_work(scene: dict, field: str) -> bool:
+def ensure_languages(scene: dict, source_lang: str, languages: list[str]) -> None:
+    """Thêm mục còn thiếu cho ngôn ngữ mới thêm vào dự án."""
+    for lang in languages:
+        scene["langs"].setdefault(lang, new_lang_entry(is_source=(lang == source_lang)))
+
+
+def needs_work(entry: dict, field: str) -> bool:
     """Chỉ tạo lại những gì chưa 'ready' (missing / stale / error)."""
-    return scene[field] != "ready"
+    return entry[field] != "ready"
 
 
-def mark_stale(scene: dict, field: str) -> None:
+def mark_stale(entry: dict, field: str) -> None:
     """Đầu vào của `field` đã đổi. 'missing' giữ nguyên (chưa có gì để mà cũ)."""
-    if scene[field] != "missing":
-        scene[field] = "stale"
+    if entry[field] != "missing":
+        entry[field] = "stale"
 
 
-def apply_scene_edits(project: Project, edits: list[dict]) -> tuple[list[dict], bool]:
+# ── Quy tắc phụ thuộc ─────────────────────────────────────────────────────────
+# Sửa lời gốc       → audio + clip ngôn ngữ gốc stale; bản dịch + audio + clip MỌI ngôn ngữ dịch stale
+# Sửa bản dịch (en) → audio + clip ngôn ngữ đó stale
+# Sửa mô tả ảnh     → ảnh stale + clip MỌI ngôn ngữ stale (ảnh dùng chung)
+def set_source_narration(scene: dict, text: str, source_lang: str) -> bool:
+    text = text.strip()
+    src = scene["langs"][source_lang]
+    if src["narration"] == text:
+        return False
+    src["narration"] = text
+    mark_stale(src, "audio_status")
+    mark_stale(src, "clip_status")
+    for lang, entry in scene["langs"].items():
+        if lang != source_lang:
+            mark_stale(entry, "text_status")
+            mark_stale(entry, "audio_status")
+            mark_stale(entry, "clip_status")
+    return True
+
+
+def set_translation(scene: dict, lang: str, text: str, source_lang: str, *, by_user: bool) -> bool:
+    """Ghi bản dịch. by_user=True: người dùng sửa tay → coi như bản dịch hợp lệ cho lời gốc HIỆN TẠI."""
+    text = text.strip()
+    entry = scene["langs"][lang]
+    changed = entry["narration"] != text
+    entry["narration"] = text
+    entry["text_status"] = "ready" if text else "missing"
+    entry["source_hash"] = text_hash(scene["langs"][source_lang]["narration"])
+    entry["edited"] = by_user or (entry["edited"] and not changed)
+    entry["error"] = None if entry["error"] and entry["error"].startswith("[translate]") else entry["error"]
+    if changed:
+        mark_stale(entry, "audio_status")
+        mark_stale(entry, "clip_status")
+    return changed
+
+
+def set_image_prompt(scene: dict, prompt: str) -> bool:
+    prompt = prompt.strip()
+    if scene["image_prompt"] == prompt:
+        return False
+    scene["image_prompt"] = prompt
+    mark_stale(scene, "image_status")
+    for entry in scene["langs"].values():
+        mark_stale(entry, "clip_status")
+    return True
+
+
+def apply_scene_edits(project: Project, edits: list[dict]) -> tuple[list[dict], set[str]]:
     """Thay toàn bộ danh sách cảnh bằng `edits` (đã sắp theo thứ tự mong muốn).
 
-    Mỗi phần tử: {"id": <id cũ hoặc None nếu là cảnh mới>, "narration", "image_prompt"}.
-    Quy tắc phụ thuộc (CLAUDE.md):
-      - sửa lời đọc → audio stale (và clip stale)
-      - sửa prompt ảnh → ảnh stale (và clip stale)
-      - cảnh mới → missing; cảnh bị xoá → xoá thư mục của nó
-    Trả về (danh sách mới, có thay đổi hay không).
+    Mỗi phần tử: {"id": <id cũ hoặc None nếu là cảnh mới>, "narration": <lời gốc>, "image_prompt",
+                  "translations": {<lang>: <bản dịch>} (tuỳ chọn — chỉ gửi bản dịch người dùng đã sửa)}.
+    Trả về (danh sách mới, các ngôn ngữ có thay đổi → video đã xuất của chúng thành "cũ").
     """
     with project.lock:
+        info = project.load_info()
+        source, languages = info["source_lang"], info["languages"]
         old = {s["id"]: s for s in project.load_scenes()}
         unknown = [e["id"] for e in edits if e.get("id") and e["id"] not in old]
         if unknown:
@@ -269,48 +383,147 @@ def apply_scene_edits(project: Project, edits: list[dict]) -> tuple[list[dict], 
         ids = [e["id"] for e in edits if e.get("id")]
         if len(ids) != len(set(ids)):
             raise ValueError("Một cảnh xuất hiện hai lần")
+        for e in edits:
+            for lang in (e.get("translations") or {}):
+                if lang not in languages or lang == source:
+                    raise ValueError(f"Ngôn ngữ dịch không thuộc dự án: {lang}")
 
         # Cảnh mới nhận id = lớn nhất từng có + 1; KHÔNG dùng lại id của cảnh đã xoá
         next_num = max((int(i) for i in old), default=0) + 1
-        result, changed = [], False
+        result, changed_langs = [], set()
         for order, e in enumerate(edits, start=1):
-            narration, prompt = e["narration"].strip(), e.get("image_prompt", "").strip()
             if not e.get("id"):
-                result.append(new_scene(f"{next_num:02d}", order, narration, prompt))
+                s = new_scene(f"{next_num:02d}", order, e["narration"], e.get("image_prompt", ""), source, languages)
                 next_num += 1
-                changed = True
-                continue
-            s = dict(old[e["id"]])
-            if s["order"] != order:
-                s["order"] = order
-                changed = True
-            if s["narration"] != narration:
-                s["narration"] = narration
-                mark_stale(s, "audio_status")
-                mark_stale(s, "clip_status")
-                changed = True
-            if s["image_prompt"] != prompt:
-                s["image_prompt"] = prompt
-                mark_stale(s, "image_status")
-                mark_stale(s, "clip_status")
-                changed = True
+                changed_langs.update(languages)
+            else:
+                s = json.loads(json.dumps(old[e["id"]]))  # bản sao sâu
+                ensure_languages(s, source, languages)
+                if s["order"] != order:
+                    s["order"] = order
+                    changed_langs.update(languages)
+                if set_source_narration(s, e["narration"], source):
+                    changed_langs.update(languages)
+                if set_image_prompt(s, e.get("image_prompt", "")):
+                    changed_langs.update(languages)
+            for lang, text in (e.get("translations") or {}).items():
+                if text is not None and text.strip() != s["langs"][lang]["narration"]:
+                    set_translation(s, lang, text, source, by_user=True)
+                    changed_langs.add(lang)
             result.append(s)
 
         removed = set(old) - set(ids)
-        changed = changed or bool(removed)
+        if removed:
+            changed_langs.update(languages)
         project.save_scenes(result)
         for scene_id in removed:
             shutil.rmtree(project.scene_dir(scene_id), ignore_errors=True)
-        if changed:
-            project.mark_final_stale()
-        return result, changed
+        if changed_langs:
+            project.mark_final_stale(sorted(changed_langs))
+        return result, changed_langs
 
 
-def export_problems(scenes: list[dict], fields=tuple(STATUS_FILES)) -> list[dict]:
-    """Các cảnh chưa sẵn sàng để xuất video: [{id, order, missing: {field: status}, error}]."""
+def export_problems(scenes: list[dict], lang: str, source_lang: str, include_clips: bool = False) -> list[dict]:
+    """Các cảnh chưa sẵn sàng để xuất video ngôn ngữ `lang`: [{id, order, not_ready: {field: status}, error}].
+    field: image_status | text_status (bản dịch) | audio_status | clip_status."""
     problems = []
     for s in scenes:
-        bad = {f: s[f] for f in fields if s[f] != "ready"}
+        entry = s["langs"].get(lang)
+        bad = {}
+        if s["image_status"] != "ready":
+            bad["image_status"] = s["image_status"]
+        if entry is None:
+            bad["text_status"] = "missing"
+        else:
+            if lang != source_lang and entry["text_status"] != "ready":
+                bad["text_status"] = entry["text_status"]
+            if entry["audio_status"] != "ready":
+                bad["audio_status"] = entry["audio_status"]
+            if include_clips and entry["clip_status"] != "ready":
+                bad["clip_status"] = entry["clip_status"]
         if bad:
-            problems.append({"id": s["id"], "order": s["order"], "not_ready": bad, "error": s["error"]})
+            problems.append({"id": s["id"], "order": s["order"], "lang": lang, "not_ready": bad,
+                             "error": (entry or {}).get("error") or s.get("image_error")})
     return problems
+
+
+# ── Chuyển dự án định dạng cũ (v1, chỉ tiếng Việt) sang v2 ─────────────────────
+def needs_migration(project_dir: Path) -> bool:
+    pf = project_dir / "project.json"
+    return pf.is_file() and read_json(pf).get("schema_version", 1) < SCHEMA_VERSION
+
+
+def migrate_project(project_dir: Path, default_voice: str, source_lang: str = "vi",
+                    dry_run: bool = False, log: Callable[[str], None] = print) -> bool:
+    """v1 → v2. An toàn khi chạy lại / bị ngắt giữa chừng:
+      1. sao lưu project.json, scenes.json (*.v1.bak) — chỉ lần đầu
+      2. chuyển file: scenes/<id>/{audio.wav, clip.mp4, annotation.json} → scenes/<id>/<lang>/, final.* → final.<lang>.*
+         (file đã chuyển thì bỏ qua)
+      3. ghi scenes.json mới, rồi CUỐI CÙNG ghi project.json kèm schema_version = 2 (dấu "đã xong")
+    Trả về True nếu dự án cần (và đã, nếu không dry_run) chuyển."""
+    if not needs_migration(project_dir):
+        return False
+    lang = source_lang
+    info = read_json(project_dir / "project.json")
+    scenes_path = project_dir / "scenes.json"
+    raw_scenes = read_json(scenes_path) if scenes_path.is_file() else []
+    log(f"[migrate] {project_dir.name}: {len(raw_scenes)} cảnh" + (" (dry-run)" if dry_run else ""))
+    if dry_run:
+        return True
+
+    for name in ("project.json", "scenes.json"):
+        src, bak = project_dir / name, project_dir / f"{name}.v1.bak"
+        if src.is_file() and not bak.exists():
+            shutil.copy2(src, bak)
+
+    def move(src: Path, dst: Path) -> None:
+        if src.is_file() and not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            replace_file(src, dst)
+
+    for s in raw_scenes:
+        sdir = project_dir / "scenes" / s["id"]
+        for fname in ("audio.wav", "clip.mp4", "annotation.json"):
+            move(sdir / fname, sdir / lang / fname)
+        for tmp in sdir.glob("wb_*"):  # thư mục tạm còn sót của bước vẽ bảng
+            shutil.rmtree(tmp, ignore_errors=True)
+    for old, new in (("final.mp4", f"final.{lang}.mp4"), ("final.srt", f"final.{lang}.srt"),
+                     ("final.ass", f"final.{lang}.ass"), ("remotion_props.json", f"remotion_props.{lang}.json")):
+        move(project_dir / old, project_dir / new)
+
+    new_scenes = []
+    for s in raw_scenes:
+        if "langs" in s:  # cảnh đã ở định dạng mới (lần chạy trước bị ngắt sau khi ghi scenes.json)
+            new_scenes.append(s)
+            continue
+        err = s.get("error")
+        image_err = err if err and err.startswith("[images]") else None
+        entry = new_lang_entry(s.get("narration", ""), is_source=True)
+        entry.update(duration_sec=s.get("duration_sec"), audio_status=s.get("audio_status", "missing"),
+                     clip_status=s.get("clip_status", "missing"), error=None if image_err else err)
+        new_scenes.append({"id": s["id"], "order": s["order"], "image_prompt": s.get("image_prompt", ""),
+                           "image_status": s.get("image_status", "missing"), "image_error": image_err,
+                           "langs": {lang: entry}})
+    write_json_atomic(scenes_path, new_scenes)
+
+    settings = dict(info.get("settings", {}))
+    voice = settings.pop("voice", None) or default_voice
+    settings["voices"] = {lang: voice}
+    # Dự án rất cũ (trước khi có final_status) → dựa vào việc file video có tồn tại không
+    has_video = (project_dir / f"final.{lang}.mp4").is_file()
+    final = {"status": info.pop("final_status", "ready" if has_video else "missing")}
+    for key in ("final_duration_sec", "final_subtitles", "final_engine", "final_music"):
+        if key in info:
+            final[key.removeprefix("final_")] = info.pop(key)
+    info.update(schema_version=SCHEMA_VERSION, source_lang=lang, languages=[lang],
+                titles={lang: info.get("name", "")}, settings=settings, finals={lang: final})
+    write_json_atomic(project_dir / "project.json", info)  # cuối cùng: đánh dấu đã chuyển xong
+    return True
+
+
+def migrate_all(outputs_dir: Path, default_voice: str, **kw) -> list[str]:
+    done = []
+    for pf in sorted(outputs_dir.glob("*/project.json")):
+        if is_valid_project_id(pf.parent.name) and migrate_project(pf.parent, default_voice, **kw):
+            done.append(pf.parent.name)
+    return done

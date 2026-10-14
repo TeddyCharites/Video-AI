@@ -57,7 +57,7 @@ const s = (id, sid) => `${p(id)}/scenes/${encodeURIComponent(sid)}`;
 
 export const api = {
   settings: () => request('GET', '/api/settings'),
-  voices: () => request('GET', '/api/voices'),
+  voices: lang => request('GET', `/api/voices?lang=${encodeURIComponent(lang)}`),
   health: () => request('GET', '/api/health'),
 
   listProjects: () => request('GET', '/api/projects'),
@@ -69,13 +69,19 @@ export const api = {
   split: (id, mode, force) => request('POST', `${p(id)}/split`, { mode, force }),
   saveScenes: (id, scenes) => request('PUT', `${p(id)}/scenes`, { scenes }),
   updateScene: (id, sid, body) => request('PATCH', s(id, sid), body),
+  translate: (id, langs) => request('POST', `${p(id)}/translate`, { langs }),
+  retranslate: (id, sid, langs) => request('POST', `${s(id, sid)}/translate`, { langs }),
+  keepTranslation: (id, sid, lang) => request('POST', `${s(id, sid)}/translations/${encodeURIComponent(lang)}/keep`),
 
   generateImages: id => request('POST', `${p(id)}/images`),
   regenerateImage: (id, sid) => request('POST', `${s(id, sid)}/image`),
-  generateAudio: id => request('POST', `${p(id)}/audio`),
-  regenerateAudio: (id, sid) => request('POST', `${s(id, sid)}/audio`),
+  generateAudio: (id, lang) => request('POST', `${p(id)}/audio`, { lang }),
+  regenerateAudio: (id, sid, lang) => request('POST', `${s(id, sid)}/audio`, { lang }),
 
-  exportVideo: id => request('POST', `${p(id)}/export`),
+  exportVideo: (id, langs) => request('POST', `${p(id)}/export`, { langs }),
+  suggestShorts: id => request('POST', `${p(id)}/shorts/suggest`),
+  createShort: (id, body) => request('POST', `${p(id)}/shorts`, body),
+  syncParent: id => request('POST', `${p(id)}/sync-parent`),
   uploadMusic: (id, file) => upload(`${p(id)}/music`, file),
   deleteMusic: id => request('DELETE', `${p(id)}/music`),
   cancelJob: jobId => request('DELETE', `/api/jobs/${encodeURIComponent(jobId)}`),

@@ -20,6 +20,19 @@ def _require(tool: str) -> str:
     return exe
 
 
+def video_size(path: Path) -> tuple[int, int] | None:
+    """(rộng, cao) của luồng video đầu tiên; None nếu không đọc được."""
+    out = subprocess.run(
+        [_require("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+         "-of", "csv=p=0:s=x", str(path)], capture_output=True, text=True,
+    ).stdout.strip()
+    try:
+        w, h = (int(x) for x in out.split("x")[:2])
+        return w, h
+    except ValueError:
+        return None
+
+
 def media_duration(path: Path) -> float:
     out = subprocess.run(
         [_require("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],

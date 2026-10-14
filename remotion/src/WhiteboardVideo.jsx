@@ -28,7 +28,7 @@ export const WhiteboardVideo = ({ background, title, scenes, subtitles, subtitle
 
     {subtitles.map((c, i) => (
       <Sequence key={i} from={c.from} durationInFrames={c.durationInFrames} name="Phụ đề" layout="none">
-        <Subtitle text={c.text} style={subtitleStyle} />
+        <Subtitle text={c.text} secondary={c.secondary} style={subtitleStyle} />
       </Sequence>
     ))}
   </AbsoluteFill>
@@ -38,7 +38,7 @@ export const WhiteboardVideo = ({ background, title, scenes, subtitles, subtitle
 //   - mờ dần vào ở đầu, mờ dần ra ở cuối video
 //   - "ducking": quanh các đoạn có giọng đọc (speech, Python truyền sang) nhạc nhỏ xuống duckLevel,
 //     chuyển mượt trong rampFrames khung hình thay vì tụt đột ngột
-const BackgroundMusic = ({ src, volume, duck, duckLevel, rampFrames, fadeInFrames, fadeOutFrames, speech }) => {
+export const BackgroundMusic = ({ src, volume, duck, duckLevel, rampFrames, fadeInFrames, fadeOutFrames, speech }) => {
   const { durationInFrames } = useVideoConfig();
   const volumeAt = f => {
     let v = volume;
@@ -124,20 +124,29 @@ const TitleCard = ({ text, subtitle, durationInFrames, font }) => {
   );
 };
 
-const Subtitle = ({ text, style }) => (
-  <AbsoluteFill style={{ justifyContent: 'flex-end', alignItems: 'center', paddingBottom: style.bottom }}>
-    <div style={{
-      maxWidth: '84%', textAlign: 'center',
-      fontFamily: `"${style.fontFamily}", "Segoe UI", sans-serif`, fontSize: style.fontSize, lineHeight: 1.45,
-    }}>
+// Phụ đề: dòng chính (ngôn ngữ đang đọc) + dòng phụ tuỳ chọn (song ngữ: nhỏ hơn, màu vàng nhạt)
+export const Subtitle = ({ text, secondary, style }) => {
+  const line = (content, size, color) => (
+    <div style={{ fontSize: size, lineHeight: 1.45 }}>
       {/* span inline (không phải phần tử flex) để hộp nền ôm sát TỪNG dòng khi chữ xuống dòng */}
       <span style={{
-        color: '#fff', backgroundColor: 'rgba(0, 0, 0, 0.68)',
-        padding: `${style.fontSize * 0.12}px ${style.fontSize * 0.4}px`, borderRadius: style.fontSize * 0.2,
+        color, backgroundColor: 'rgba(0, 0, 0, 0.68)',
+        padding: `${size * 0.12}px ${size * 0.4}px`, borderRadius: size * 0.2,
         boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone',
       }}>
-        {text}
+        {content}
       </span>
     </div>
-  </AbsoluteFill>
-);
+  );
+  return (
+    <AbsoluteFill style={{ justifyContent: 'flex-end', alignItems: 'center', paddingBottom: style.bottom }}>
+      <div style={{
+        maxWidth: '84%', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: style.fontSize * 0.2,
+        fontFamily: `"${style.fontFamily}", "Segoe UI", sans-serif`,
+      }}>
+        {line(text, style.fontSize, '#fff')}
+        {secondary ? line(secondary, Math.round(style.fontSize * 0.78), '#f5e6b5') : null}
+      </div>
+    </AbsoluteFill>
+  );
+};
