@@ -1,0 +1,10 @@
+# Git tự chuẩn hoá xuống dòng cho file văn bản
+* text=auto
+
+# cmd.exe đọc lệch file .bat dùng xuống dòng LF → luôn checkout với CRLF trên mọi máy
+*.bat text eol=crlf
+
+# File nhị phân: không đụng tới
+*.png binary
+*.jpg binary
+*.gif binary

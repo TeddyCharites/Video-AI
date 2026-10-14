@@ -1,0 +1,25 @@
+# Môi trường Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node (Remotion, test giao diện)
+node_modules/
+remotion/out/
+remotion/build/
+
+# Dữ liệu sinh ra (ảnh, audio, video) — nặng, không đưa vào Git
+outputs/
+
+# Repo bên thứ ba (clone lại bằng git clone, xem README)
+third_party/
+
+# File tạm, log, cấu hình riêng của máy / editor
+*.tmp
+*.tmp.*
+*.log
+.env
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,8 @@
+{
+  "name": "video-studio-ui-test",
+  "private": true,
+  "description": "Test giao diện bằng jsdom (DOM giả lập trong Node). Xem tests/ui/README trong ui_test.mjs.",
+  "type": "module",
+  "scripts": { "test": "node ui_test.mjs" },
+  "devDependencies": { "jsdom": "26.1.0" }
+}

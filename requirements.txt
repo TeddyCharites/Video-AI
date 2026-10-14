@@ -1,0 +1,30 @@
+# Video Studio Local — các gói Python chính (phiên bản đã chạy được trên máy RTX 5060, Python 3.12).
+#
+# PyTorch cài RIÊNG trước, lấy lệnh từ https://pytorch.org (bản CUDA mới nhất, hỗ trợ RTX 50-series):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# Sau đó:  pip install -r requirements.txt
+#
+# Repo vẽ bảng (third_party/whiteboard-stream-animation) có venv RIÊNG, tạo bằng prepare_env.py của nó.
+
+# Bước 2 — ảnh (FLUX.2 klein cần diffusers bản dev từ GitHub)
+diffusers @ git+https://github.com/huggingface/diffusers.git
+transformers==5.19.0
+accelerate==1.15.0
+bitsandbytes==0.50.2
+
+# Bước 3 — giọng đọc (CPU/ONNX)
+vieneu==3.8.3
+soundfile==0.14.0
+
+# Backend
+fastapi==0.143.0
+uvicorn==0.54.0
+pydantic==2.14.1
+python-multipart==0.0.32   # nhận file tải lên (nhạc nền)
+httpx==0.28.1          # TestClient trong tests/test_api.py
+
+# Chung
+huggingface_hub==2.2.0
+numpy==2.5.2
+pillow==12.3.0
+PyYAML==6.0.3

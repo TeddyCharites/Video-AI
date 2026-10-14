@@ -1,0 +1,90 @@
+# Cấu hình Video Studio Local. Đường dẫn tương đối tính từ thư mục gốc project.
+
+outputs_dir: outputs
+
+# auto: offline (không hỏi Hugging Face khi nạp model → nạp nhanh, chạy được khi mất mạng) nếu model đã có
+# trong cache; chưa có thì để online cho lần đầu tự tải. true / false: ép luôn offline / online.
+hf_offline: auto
+
+video:
+  aspect_ratio: "16:9"          # "16:9" hoặc "9:16"
+  resolutions:                  # phải chia hết cho 16 (yêu cầu của FLUX)
+    "16:9": [1280, 720]
+    "9:16": [720, 1280]
+  fps: 30
+
+scenes:
+  min_sec: 8                    # hướng 1 (whiteboard-stream-animation): 8–20 s/cảnh
+  max_sec: 20
+  syllables_per_sec: 4.5        # tốc độ đọc đo từ VieNeu (~28 tiếng / 6 s) → đổi giây ra số tiếng cho LLM
+
+llm:
+  host: http://127.0.0.1:11434  # Ollama
+  model: hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
+  temperature: 0.3
+  num_ctx: 16384                # độ dài ngữ cảnh (token) — đủ cho kịch bản ~5000 từ + JSON trả về
+  use_mmap: true                # BẮT BUỘC trên máy này: không có thì Ollama cấp 17.8GB pinned RAM → lỗi
+                                # "failed to allocate CUDA_Host buffer" (commit limit chỉ 34GB)
+  max_retries: 2                # số lần thử lại khi JSON sai định dạng
+  chunk_words: 600              # kịch bản dài được chia thành các phần ~600 tiếng, mỗi phần gọi LLM một lần
+  timeout_sec: 900
+
+images:
+  backend: flux                 # flux | placeholder (ảnh giả để test không cần GPU)
+  model: hlhc/FLUX.2-klein-4B-bnb-4bit
+  steps: 4                      # model distilled: ~4 bước
+  guidance_scale: 1.0
+  seed: 42
+  cpu_offload: true             # true: đỉnh ~2.8GB VRAM, 7.3s/ảnh | false: ~6.6GB, 11.6s/ảnh (tràn VRAM)
+  # Không viết "no text": model khuếch tán hiểu phủ định kém, nhắc tới "text" lại dễ sinh chữ
+  style_suffix: >-
+    , wordless illustration made only of simple shapes, icons and arrows,
+    black line art on a plain white background, clean bold outlines,
+    whiteboard sketch style, minimal shading
+
+tts:
+  precision: int8               # int8 (nhanh hơn ~30%) | fp32 (chất lượng tối đa)
+  voice: "Thiện Minh"           # xem: python tests/test_tts.py --list-voices
+  temperature: 0.8
+
+whiteboard:
+  # stream  = hướng 1 (whiteboard-stream-animation): vẽ cả ảnh một lượt, giữ hình 3s cuối
+  # regions = hướng 2 (srt-whiteboard-animation): vẽ từng vùng khớp từng câu đang đọc (annotation tự sinh)
+  engine: stream
+  repo_dir: third_party/whiteboard-stream-animation
+  regions_repo_dir: third_party/srt-whiteboard-animation
+  max_regions: 3                # hướng 2: số vùng tối đa mỗi cảnh (≈ số nhóm câu)
+  tail_ms: 600                  # giữ hình thêm sau khi hết lời đọc
+  min_clip_ms: 6000             # repo luôn dành 3s cuối để giữ hình → clip ngắn hơn thì không còn thời gian vẽ
+  pen_image: assets/drawing-hand-clean.png   # bàn tay đã xoá chữ trên bút (tools/clean_pen_image.py); để trống = ảnh gốc
+  extra_args: ["--pause", "light"]
+
+render:
+  engine: remotion              # remotion: tiêu đề + chuyển cảnh + phụ đề đẹp | ffmpeg: ghép thẳng, nhanh hơn
+                                # (chưa cài remotion/node_modules thì tự dùng ffmpeg)
+  audio_bitrate: 192k
+
+remotion:
+  title: true                   # mặc định cho dự án mới: màn hình tiêu đề (tên dự án) ở đầu video
+  title_sec: 3.0
+  title_subtitle: ""            # dòng chữ nhỏ dưới tiêu đề (để trống = không có)
+  title_font: Segoe Print       # font viết tay có sẵn trên Windows
+  transition_sec: 0.4           # chuyển cảnh mờ dần; phải < whiteboard.tail_ms để giọng 2 cảnh không đè nhau
+  background: "#F6F1E3"         # trùng màu giấy của repo vẽ bảng
+  concurrency: 6                # số khung hình Remotion vẽ song song (máy 12 luồng CPU)
+
+music:                          # nhạc nền (mỗi dự án tải file riêng ở bước 4)
+  volume: 0.15                  # âm lượng mặc định (0–1) so với giọng đọc
+  duck: true                    # tự giảm nhạc khi có giọng đọc
+  duck_level: 0.35              # lúc có giọng, nhạc còn 35% âm lượng đã chọn
+  duck_ramp_sec: 0.4            # thời gian nhạc nhỏ dần / to dần quanh giọng đọc
+  fade_in_sec: 1.0
+  fade_out_sec: 2.5
+  max_upload_mb: 50
+
+subtitles:
+  enabled: true                # mặc định cho dự án mới (mỗi dự án bật/tắt riêng ở bước 4)
+  font: Arial                   # font có đủ dấu tiếng Việt
+  fonts_dir: C:/Windows/Fonts   # nơi libass tìm font
+  font_size_ratio: 0.05         # cỡ chữ = 5% chiều cao video (36px ở 720p)
+  max_words: 12                 # tối đa ~12 tiếng mỗi dòng phụ đề (9:16 tự giảm còn 8)

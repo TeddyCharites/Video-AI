@@ -1,0 +1,15 @@
+{
+  "name": "video-studio-remotion",
+  "private": true,
+  "description": "Ghép clip vẽ bảng + giọng đọc + tiêu đề + phụ đề thành final.mp4 (Python gọi qua pipeline/remotion_render.py)",
+  "scripts": {
+    "studio": "remotion studio src/index.jsx",
+    "render": "remotion render src/index.jsx WhiteboardVideo"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.535",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.535"
+  }
+}
